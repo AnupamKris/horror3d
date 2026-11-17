@@ -11,6 +11,10 @@
   "count": 4,
   "loop": false
  },
+ "lid": {
+  "count": 2,
+  "loop": false
+ },
  "creak": {
   "count": 4,
   "loop": false
@@ -19,7 +23,19 @@
   "count": 2,
   "loop": false
  },
+ "unlock": {
+  "count": 2,
+  "loop": false
+ },
+ "footstep_run": {
+  "count": 2,
+  "loop": false
+ },
  "floor_creak": {
+  "count": 2,
+  "loop": false
+ },
+ "steps_above": {
   "count": 2,
   "loop": false
  },
@@ -27,8 +43,16 @@
   "count": 2,
   "loop": false
  },
+ "door_rattle": {
+  "count": 2,
+  "loop": false
+ },
  "stinger": {
   "count": 4,
+  "loop": false
+ },
+ "knock": {
+  "count": 1,
   "loop": false
  }
 }

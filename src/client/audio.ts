@@ -249,8 +249,19 @@ export class Audio {
   footstep(run: boolean, crouch: boolean) {
     const c = this.ctx, t = c.currentTime;
     const vol = crouch ? 0.12 : run ? 0.45 : 0.28;
-    const out = this.out(undefined, vol, 0.35);
     this.stepSide ^= 1;
+    // recorded steps: dedicated walk takes if present, else the run takes played softer & lower
+    const walkId = this.has("footstep") ? "footstep" : "footstep_run";
+    const played = run
+      ? this.sample("footstep_run", undefined, 0.6, { jitter: 0.07, wet: 0.25 })
+      : this.sample(walkId, undefined, crouch ? 0.18 : 0.38, {
+          rate: walkId === "footstep" ? 1 : 0.9, jitter: 0.07, wet: 0.25,
+        });
+    if (played) {
+      if (Math.random() < 0.12) this.sample("floor_creak", undefined, (crouch ? 0.2 : 0.45) * (0.6 + Math.random() * 0.4), { jitter: 0.08, wet: 0.3 });
+      return;
+    }
+    const out = this.out(undefined, vol, 0.35);
     this.noise(t, 0.09, out, "lowpass", 380 + Math.random() * 200, 1).f.frequency.exponentialRampToValueAtTime(90, t + 0.08);
     this.tone(t, 70 + Math.random() * 20, 0.08, out, "sine", 0.6);
     if (Math.random() < 0.12) {
@@ -266,6 +277,7 @@ export class Audio {
     switch (id) {
       case "hinge": if (this.sample("creak", pos, vol * 0.7, { rate: 1.15 })) return; break;
       case "lid":
+        if (this.sample("lid", pos, vol)) return;
         if (this.sample("creak", pos, vol * 0.75, { rate: 0.8 })) return void this.knock(pos, vol * 0.4, 1);
         break;
       case "stinger": if (this.sample("stinger", undefined, vol * 1.1, { jitter: 0.02, wet: 0.35 })) return; break;
