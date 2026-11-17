@@ -5,7 +5,7 @@ import {
   type ItemId, type Vec3,
 } from "./level";
 import type {
-  ClientMsg, DollState, EntityState, GameEvent, ItemLocation, PlayerId, PlayerState, Snapshot, SoundId,
+  ClientMsg, DebugCmd, DollState, EntityState, GameEvent, ItemLocation, PlayerId, PlayerState, Snapshot, SoundId,
 } from "./protocol";
 
 export function mulberry32(seed: number) {
@@ -47,6 +47,8 @@ export class GameSim {
   private nextDollMove = 25;
   private stalking: { target: PlayerId; placed: boolean; scaredAt: number } | null = null;
   private portraitStage = 0;
+  /** accept debug commands (only for an in-tab/dev host, never a public server) */
+  allowDebug = false;
 
   constructor(seed = (Math.random() * 2 ** 31) | 0) {
     this.rng = mulberry32(seed);
@@ -82,6 +84,53 @@ export class GameSim {
     if (!p) return;
     if (msg.t === "state") this.applyState(p, msg);
     else if (msg.t === "interact") this.interact(p, msg.id);
+    else if (msg.t === "debug" && this.allowDebug) this.debug(p, msg.cmd);
+  }
+
+  // ------------------------------------------------------------ debug cheats
+  private debug(p: PlayerRec, cmd: DebugCmd): void {
+    const give = (item: ItemId) => {
+      if (this.items[item].at !== "player") this.items[item] = { at: "player", id: p.id };
+    };
+    switch (cmd) {
+      case "scare": {
+        // instant: doll appears 1.3m in front of the player and lunges
+        const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+        const spot = { x: p.pos[0] + fx * 1.3, z: p.pos[2] + fz * 1.3 };
+        collide(spot, 0.15, (eid) => this.ents[eid]?.open);
+        this.doll.anchor = -1;
+        this.doll.pos = [spot.x, 0, spot.z];
+        this.doll.rotY = Math.atan2(p.pos[0] - spot.x, p.pos[2] - spot.z);
+        this.doll.visible = true;
+        this.stalking = { target: p.id, placed: true, scaredAt: this.time };
+        this.emit({ k: "scare", to: p.id, pos: [...this.doll.pos], rotY: this.doll.rotY });
+        this.sound("stinger", this.doll.pos, 1);
+        break;
+      }
+      case "stalk": // the real thing: doll appears behind you once you look away; turn around
+        this.stalking = { target: p.id, placed: false, scaredAt: -1 };
+        this.say(p.id, "[debug] Stalk armed - look away from the doll, then turn around.", 3);
+        break;
+      case "phase1":
+        give("trunk_key");
+        this.items.trunk_key = { at: "gone" };
+        this.ents.trunk.locked = false;
+        if (this.phase < 1) this.enterPhase1();
+        break;
+      case "phase2":
+        give("door_key");
+        if (this.phase < 1) { this.phase = 1; this.power = 0; this.emit({ k: "blackout" }); }
+        if (this.phase < 2) this.enterPhase2(p.id);
+        break;
+      case "ambient": this.ambient(); break;
+      case "doll": this.nextDollMove = this.time; if (this.phase < 1) this.phase = 1; break;
+      case "flicker": this.emit({ k: "flicker", dur: 1.5, intensity: 1 }); break;
+      case "chair":
+        this.moveDollToAnchor(0);
+        this.emit({ k: "chair", amp: 0.2, dur: 8 });
+        this.sound("creak", this.doll.pos, 0.8);
+        break;
+    }
   }
 
   private applyState(p: PlayerRec, m: Extract<ClientMsg, { t: "state" }>): void {
@@ -292,12 +341,14 @@ export class GameSim {
     if (s.scaredAt < 0) {
       if (p.seesDoll && dist2(p.pos, this.doll.pos) < 2.8 * 2.8) {
         s.scaredAt = this.time;
-        this.emit({ k: "scare", to: p.id });
+        this.emit({ k: "scare", to: p.id, pos: [...this.doll.pos], rotY: this.doll.rotY });
         this.sound("stinger", this.doll.pos, 1);
       }
       return;
     }
-    if (this.time - s.scaredAt > 1.6 && !this.anyoneSeesDoll()) {
+    // vanish right after the lunge; reappear in the chair only when nobody is facing it
+    if (this.time - s.scaredAt > 0.8) this.doll.visible = false;
+    if (this.time - s.scaredAt > 2.0 && this.hiddenFromAll(DOLL_ANCHORS[0].pos)) {
       this.moveDollToAnchor(0);
       this.stalking = null;
       this.nextDollMove = this.time + 12;

@@ -7,7 +7,7 @@ import { ClientSession } from "./net/client";
 import { Host } from "./net/host";
 import { createLoopback, createWebSocketTransport, type Transport } from "./net/transport";
 import { entityById, ITEMS, PLAYER, SPAWN, type ItemId } from "./shared/level";
-import { STATE_HZ, type GameEvent } from "./shared/protocol";
+import { STATE_HZ, type DebugCmd, type GameEvent } from "./shared/protocol";
 
 const $ = (id: string) => document.getElementById(id)!;
 const params = new URLSearchParams(location.search);
@@ -46,6 +46,7 @@ if (serverUrl) {
   transport = await createWebSocketTransport(serverUrl); // dedicated server (future)
 } else {
   host = new Host();
+  host.sim.allowDebug = true; // in-tab host = dev/solo: debug keys allowed
   const lb = createLoopback(Number(params.get("lag") ?? 0));
   host.addConnection(lb.conn);
   transport = lb.transport;
@@ -119,8 +120,9 @@ session.onEvent((e: GameEvent) => {
     case "scare":
       if (e.to === session.you) {
         scare = 1;
-        world.lungeDoll();
-        flashFlickerUntil = clock.elapsedTime + 1.4;
+        world.lungeDoll(e.pos, e.rotY);
+        // let them SEE it lunge first, then the flashlight dies
+        setTimeout(() => (flashFlickerUntil = clock.elapsedTime + 1.0), 650);
       }
       break;
     case "escaped":
@@ -276,6 +278,40 @@ renderer.setAnimationLoop(() => {
 
   post.render(world.scene, player.camera);
   post.adapt(dt);
+});
+
+// ------------------------------------------------------------------ debug keys (` toggles)
+const DEBUG_KEYS: [string, DebugCmd, string][] = [
+  ["Digit1", "scare", "Jumpscare NOW (doll in front of you)"],
+  ["Digit2", "stalk", "Arm stalk scare (look away, turn around)"],
+  ["Digit3", "phase1", "Skip: trunk key + blackout"],
+  ["Digit4", "phase2", "Skip: door key (stalk starts in 4s)"],
+  ["Digit5", "ambient", "Random ambient event"],
+  ["Digit6", "doll", "Doll relocates (when unseen)"],
+  ["Digit7", "flicker", "Light flicker"],
+  ["Digit8", "chair", "Doll back to chair + rock"],
+];
+const debugEl = $("debug");
+let debugOn = params.has("debug");
+function renderDebug() {
+  debugEl.style.display = debugOn ? "block" : "none";
+  debugEl.innerHTML = host
+    ? `<b>DEBUG</b> (\` to hide)<br>` + DEBUG_KEYS.map(([k, , label]) => `${k.slice(5)} — ${label}`).join("<br>")
+    : "<b>DEBUG</b> unavailable on a remote server";
+}
+renderDebug();
+addEventListener("keydown", (e) => {
+  if (e.code === "Backquote") {
+    debugOn = !debugOn;
+    renderDebug();
+    return;
+  }
+  if (!debugOn || e.repeat) return;
+  const hit = DEBUG_KEYS.find(([k]) => k === e.code);
+  if (hit) {
+    session.debug(hit[1]);
+    subtitle(`[debug] ${hit[2]}`, 1.5);
+  }
 });
 
 // debug handle

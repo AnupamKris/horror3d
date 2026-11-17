@@ -55,7 +55,7 @@ export type GameEvent =
   | { k: "unlock"; id: string; by: PlayerId }
   | { k: "pickup"; item: ItemId; by: PlayerId }
   | { k: "text"; to: PlayerId | null; text: string; dur?: number }
-  | { k: "scare"; to: PlayerId }
+  | { k: "scare"; to: PlayerId; pos: Vec3; rotY: number }
   | { k: "portrait"; stage: number }
   | { k: "chair"; amp: number; dur: number }
   | { k: "lamp_swing"; amp: number }
@@ -74,7 +74,11 @@ export type ClientMsg =
       seesDoll: boolean;
     }
   | { t: "interact"; id: string }
+  | { t: "debug"; cmd: DebugCmd }
   | { t: "ping"; c: number };
+
+/** host-side cheats; only honored when the Host was created with allowDebug */
+export type DebugCmd = "scare" | "stalk" | "phase1" | "phase2" | "ambient" | "doll" | "flicker" | "chair";
 
 export type HostMsg =
   | { t: "welcome"; you: PlayerId; snap: Snapshot }

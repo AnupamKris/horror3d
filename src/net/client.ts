@@ -2,7 +2,7 @@
 // snapshot + a short buffer for interpolating remote players. Own movement is client-predicted;
 // the host only sends a correction when it disagrees.
 import type { Vec3 } from "../shared/level";
-import type { ClientMsg, GameEvent, HostMsg, PlayerId, PlayerState, Snapshot } from "../shared/protocol";
+import type { ClientMsg, DebugCmd, GameEvent, HostMsg, PlayerId, PlayerState, Snapshot } from "../shared/protocol";
 import { PROTOCOL_VERSION } from "../shared/protocol";
 import type { Transport } from "./transport";
 
@@ -52,6 +52,7 @@ export class ClientSession {
   }
 
   interact(id: string) { this.send({ t: "interact", id }); }
+  debug(cmd: DebugCmd) { this.send({ t: "debug", cmd }); }
 
   /** Interpolated remote players (excludes self). */
   remotePlayers(): PlayerState[] {

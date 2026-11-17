@@ -53,6 +53,8 @@ export class World {
   private dollAnchor = 0;
   dollFocus = new THREE.Vector3(); // point used for the "is it seen" test
   private lunge = 0;
+  /** cold under-light on the doll face during the jumpscare (always in scene: no shader recompile) */
+  scareLight = new THREE.PointLight(0xb8c8ff, 0, 1.6, 2);
 
   private remote = new Map<string, THREE.Group>();
 
@@ -222,6 +224,8 @@ export class World {
     }
     this.doll = d;
     this.dollHead = d.getObjectByName("MOV_doll_head");
+    d.add(this.scareLight);
+    this.scareLight.position.set(0, 0.12, 0.28); // low and in front of the face: underlit
     const box = new THREE.Box3().setFromObject(d);
     this.dollFocus.copy(box.getCenter(new THREE.Vector3()));
   }
@@ -252,7 +256,12 @@ export class World {
   swingLamp(amp: number) {
     this.swingAmp = Math.max(this.swingAmp, amp);
   }
-  lungeDoll() {
+  lungeDoll(pos: Vec3, rotY: number) {
+    // the event carries the spot: don't wait for the next snapshot
+    this.doll.position.set(...pos);
+    this.doll.rotation.set(0, rotY, 0);
+    this.doll.visible = true;
+    this.dollAnchor = -1;
     this.lunge = 1;
   }
 
@@ -269,6 +278,7 @@ export class World {
     if (s.power === 0 && this.power !== 0) this.blackout();
     // doll
     const dl = s.doll;
+    if (this.lunge > 0) return; // client owns the doll during the jumpscare animation
     if (this.doll && (dl.anchor !== this.dollAnchor || dl.anchor === -1)) {
       const moved = this.doll.position.distanceToSquared(new THREE.Vector3(...dl.pos)) > 1e-4;
       this.dollAnchor = dl.anchor;
@@ -339,10 +349,24 @@ export class World {
       }
     }
     if (this.lunge > 0) {
-      this.lunge = Math.max(0, this.lunge - dt * 2.5);
-      const toCam = camPos.clone().sub(this.doll.position).setY(0);
-      const d = toCam.length();
-      if (d > 0.35) this.doll.position.addScaledVector(toCam.normalize(), Math.min(d - 0.35, dt * 5));
+      // jumpscare: a beat of stillness, then the doll launches at your face (head-high, filling the view)
+      const prev = this.lunge;
+      this.lunge = Math.max(0, this.lunge - dt * 1.4);
+      const k = 1 - this.lunge; // 0 -> 1 over ~0.7s
+      if (k > 0.2 && this.lunge > 0) {
+        const s = Math.min(1, (k - 0.2) / 0.35);
+        const e = s * s; // accelerate
+        const target = camPos.clone().add(new THREE.Vector3(0, -0.42, 0));
+        const toCam = target.clone().sub(this.doll.position);
+        const toCamFlat = toCam.clone().setY(0);
+        const d = toCamFlat.length();
+        if (d > 0.55) this.doll.position.addScaledVector(toCamFlat.normalize(), Math.min(d - 0.55, dt * (2 + e * 12)));
+        this.scareLight.intensity = 2.5 * (0.7 + Math.random() * 0.3);
+        this.doll.position.y += (target.y - this.doll.position.y) * Math.min(1, dt * (3 + e * 14));
+        this.doll.rotation.y = Math.atan2(camPos.x - this.doll.position.x, camPos.z - this.doll.position.z);
+        if (this.dollHead) this.dollHead.rotation.set(-0.15, 0, 0.35 * Math.sin(k * 40)); // twitching
+      }
+      if (prev > 0 && this.lunge === 0) { this.doll.visible = false; this.scareLight.intensity = 0; } // gone when the light returns
     }
     this.dollFocus.copy(this.doll.position).add(new THREE.Vector3(0, 0.35, 0));
   }
