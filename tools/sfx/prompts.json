@@ -1,0 +1,26 @@
+{
+  "_note": "Woosh-DFlow prompts. seconds = target length (trimmed + faded after generation). variants = takes kept per sound.",
+  "sounds": [
+    { "id": "creak",       "variants": 3, "seconds": 2.5, "prompt": "old wooden floorboard creaking slowly under heavy weight, close, dry room" },
+    { "id": "hinge",       "variants": 3, "seconds": 2.5, "prompt": "rusty door hinge creaking slowly open, old wooden door" },
+    { "id": "whisper",     "variants": 4, "seconds": 3.0, "prompt": "faint creepy child whispering unintelligible words very close to the ear" },
+    { "id": "giggle",      "variants": 3, "seconds": 2.5, "prompt": "little girl giggling softly in a dark empty room, eerie" },
+    { "id": "knock",       "variants": 3, "seconds": 2.5, "prompt": "three slow heavy knocks on a thick wooden door" },
+    { "id": "steps_above", "variants": 3, "seconds": 4.5, "prompt": "heavy slow footsteps walking on the floor upstairs, muffled through the ceiling" },
+    { "id": "door_rattle", "variants": 3, "seconds": 1.8, "prompt": "locked old door handle being rattled hard, metal latch clattering" },
+    { "id": "drawer",      "variants": 2, "seconds": 1.5, "prompt": "old wooden drawer sliding open, wood friction" },
+    { "id": "lid",         "variants": 2, "seconds": 2.0, "prompt": "heavy wooden trunk lid opening with creaky hinges" },
+    { "id": "unlock",      "variants": 2, "seconds": 1.5, "prompt": "old skeleton key turning in a rusty lock, mechanical click" },
+    { "id": "pickup",      "variants": 2, "seconds": 0.8, "prompt": "small metal key picked up from wood, light jingle" },
+    { "id": "bulb_pop",    "variants": 2, "seconds": 1.5, "prompt": "light bulb popping and burning out, glass tinkle, electrical fizz" },
+    { "id": "stinger",     "variants": 3, "seconds": 3.0, "prompt": "horror movie jump scare sting, loud dissonant orchestral hit with violin screech" },
+    { "id": "thud",        "variants": 3, "seconds": 1.5, "prompt": "dull thud of a small object falling on a wooden floor" },
+    { "id": "breath",      "variants": 3, "seconds": 3.5, "prompt": "slow raspy creepy breathing close behind, in the dark" },
+    { "id": "music_box",   "variants": 2, "seconds": 5.0, "prompt": "antique music box playing a slow sad lullaby, out of tune, winding down" },
+    { "id": "footstep",    "variants": 6, "seconds": 0.5, "prompt": "single footstep on old creaky wooden floorboards, shoe" }
+  ],
+  "loops": [
+    { "id": "amb_drone",   "variants": 1, "seconds": 5.0, "prompt": "dark ambient horror drone, deep low rumble, haunted house room tone" },
+    { "id": "amb_wind",    "variants": 1, "seconds": 5.0, "prompt": "wind howling softly through a boarded broken window at night" }
+  ]
+}

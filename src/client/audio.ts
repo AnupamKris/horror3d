@@ -32,9 +32,59 @@ export class Audio {
     this.noiseBuf = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    if (c.listener.positionX) {
-      c.listener.positionX.value = 0;
-    }
+    this.loadSamples();
+  }
+
+  // ---------------------------------------------------------------- recorded samples (public/sfx)
+  /** sample id -> decoded takes. Missing ids fall back to the procedural synth. */
+  private samples = new Map<string, AudioBuffer[]>();
+  private lastTake = new Map<string, number>();
+  private samplesReady: Promise<void> = Promise.resolve();
+
+  private loadSamples() {
+    this.samplesReady = (async () => {
+      let manifest: Record<string, { count: number; loop: boolean }>;
+      try {
+        manifest = await (await fetch("/sfx/manifest.json")).json();
+      } catch {
+        return; // no sample pack: everything stays procedural
+      }
+      await Promise.all(
+        Object.entries(manifest).map(async ([id, { count }]) => {
+          const takes = await Promise.all(
+            Array.from({ length: count }, async (_, i) => {
+              try {
+                const buf = await (await fetch(`/sfx/${id}_${i + 1}.ogg`)).arrayBuffer();
+                return await this.ctx.decodeAudioData(buf);
+              } catch (e) {
+                console.warn("sfx failed", id, i + 1, e);
+                return null;
+              }
+            }),
+          );
+          const ok = takes.filter((t): t is AudioBuffer => !!t);
+          if (ok.length) this.samples.set(id, ok);
+        }),
+      );
+    })();
+  }
+
+  has(id: string) { return this.samples.has(id); }
+
+  /** play a random take (never the same twice in a row) with slight pitch variance */
+  sample(id: string, pos?: Vec3, vol = 1, opts: { rate?: number; jitter?: number; wet?: number; delay?: number } = {}) {
+    const takes = this.samples.get(id);
+    if (!takes) return false;
+    let i = (Math.random() * takes.length) | 0;
+    if (takes.length > 1 && i === this.lastTake.get(id)) i = (i + 1) % takes.length;
+    this.lastTake.set(id, i);
+    const src = this.ctx.createBufferSource();
+    src.buffer = takes[i];
+    const jitter = opts.jitter ?? 0.05;
+    src.playbackRate.value = (opts.rate ?? 1) * (1 + (Math.random() * 2 - 1) * jitter);
+    src.connect(this.out(pos, vol, opts.wet ?? 0.5));
+    src.start(this.ctx.currentTime + (opts.delay ?? 0));
+    return true;
   }
 
   resume() { return this.ctx.resume(); }
@@ -117,8 +167,27 @@ export class Audio {
   }
 
   // ---------------------------------------------------------------- ambience
+  /** recorded ambience beds (loops), layered under the procedural fear drone */
+  private async startBeds() {
+    await this.samplesReady;
+    const c = this.ctx;
+    for (const [id, vol] of [["amb_house", 0.55], ["amb_wind", 0.35], ["amb_roomtone", 0.3]] as const) {
+      const takes = this.samples.get(id);
+      if (!takes) continue;
+      const src = c.createBufferSource();
+      src.buffer = takes[(Math.random() * takes.length) | 0];
+      src.loop = true;
+      const g = c.createGain();
+      g.gain.value = 0;
+      g.gain.linearRampToValueAtTime(vol, c.currentTime + 5);
+      src.connect(g).connect(this.master);
+      src.start();
+    }
+  }
+
   startAmbience() {
     const c = this.ctx, t = c.currentTime;
+    this.startBeds();
     this.droneGain = c.createGain();
     this.droneGain.gain.value = 0;
     this.droneGain.gain.linearRampToValueAtTime(0.5, t + 6);
@@ -162,7 +231,9 @@ export class Audio {
   /** call every frame: heartbeat by fear, drone intensity */
   update(fear: number) {
     const t = this.ctx.currentTime;
-    if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.35 + fear * 0.5, t, 1.5);
+    // with a recorded bed playing, the synth drone becomes just the fear-reactive layer
+    const base = this.samples.has("amb_house") ? 0.08 : 0.35;
+    if (this.droneGain) this.droneGain.gain.setTargetAtTime(base + fear * 0.5, t, 1.5);
     if (fear > 0.25 && t >= this.heart.next) {
       const bpm = 60 + fear * 90;
       const out = this.out(undefined, 0.25 + fear * 0.7, 0.05);
@@ -182,11 +253,27 @@ export class Audio {
     this.stepSide ^= 1;
     this.noise(t, 0.09, out, "lowpass", 380 + Math.random() * 200, 1).f.frequency.exponentialRampToValueAtTime(90, t + 0.08);
     this.tone(t, 70 + Math.random() * 20, 0.08, out, "sine", 0.6);
-    if (Math.random() < 0.12) this.creak(undefined, 0.25 + Math.random() * 0.25, 0.35); // old boards
+    if (Math.random() < 0.12) {
+      // old boards
+      if (!this.sample("floor_creak", undefined, (crouch ? 0.2 : 0.45) * (0.6 + Math.random() * 0.4), { jitter: 0.08, wet: 0.3 }))
+        this.creak(undefined, 0.25 + Math.random() * 0.25, 0.35);
+    }
   }
 
   // ---------------------------------------------------------------- one-shots
   play(id: SoundId, pos?: Vec3, vol = 1) {
+    // recorded takes first (same id as the event), with a few remaps / layered tweaks
+    switch (id) {
+      case "hinge": if (this.sample("creak", pos, vol * 0.7, { rate: 1.15 })) return; break;
+      case "lid":
+        if (this.sample("creak", pos, vol * 0.75, { rate: 0.8 })) return void this.knock(pos, vol * 0.4, 1);
+        break;
+      case "stinger": if (this.sample("stinger", undefined, vol * 1.1, { jitter: 0.02, wet: 0.35 })) return; break;
+      case "music_box": if (this.sample("music_box", pos, vol * 0.8, { jitter: 0.01, wet: 0.8 })) return; break;
+      case "whisper": if (this.sample("whisper", pos, vol * 1.1, { jitter: 0.04, wet: 0.25 })) return; break;
+      case "giggle": if (this.sample("giggle", pos, vol, { jitter: 0.03, wet: 0.8 })) return; break;
+      default: if (this.sample(id, pos, vol)) return;
+    }
     switch (id) {
       case "creak": return this.creak(pos, vol, 0.9 + Math.random() * 0.8);
       case "hinge": return this.creak(pos, vol * 0.8, 0.7);

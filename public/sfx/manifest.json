@@ -1,0 +1,34 @@
+{
+ "whisper": {
+  "count": 4,
+  "loop": false
+ },
+ "amb_house": {
+  "count": 2,
+  "loop": true
+ },
+ "giggle": {
+  "count": 4,
+  "loop": false
+ },
+ "creak": {
+  "count": 4,
+  "loop": false
+ },
+ "music_box": {
+  "count": 2,
+  "loop": false
+ },
+ "floor_creak": {
+  "count": 2,
+  "loop": false
+ },
+ "breath": {
+  "count": 2,
+  "loop": false
+ },
+ "stinger": {
+  "count": 4,
+  "loop": false
+ }
+}

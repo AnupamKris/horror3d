@@ -2,3 +2,5 @@ node_modules
 dist
 previews
 public/m
+assets/*.wav
+assets/*.mp3
