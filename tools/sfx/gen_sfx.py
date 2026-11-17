@@ -47,11 +47,21 @@ def score(a: torch.Tensor) -> float:
 
 def trim(a: torch.Tensor, seconds: float) -> torch.Tensor:
     """start at the first onset, cut to length, short fades, peak-normalize to -1 dBFS"""
-    mono = a.mean(0).abs()
-    thr = mono.max() * 0.05
-    idx = int(torch.nonzero(mono > thr)[0]) if (mono > thr).any() else 0
-    start = max(0, idx - int(0.01 * SR))
+    # onset from a 10 ms RMS envelope (robust to the model's noise floor). Short one-shots
+    # (<= 1.5 s) anchor on the loudest event instead of the first one.
+    mono = a.mean(0)
+    hop = SR // 100
+    n_fr = mono.numel() // hop
+    env = mono[: n_fr * hop].reshape(n_fr, hop).pow(2).mean(1).sqrt()
     n = int(seconds * SR)
+    if seconds <= 1.5:
+        peak = int(env.argmax())
+        lead = int(0.06 * SR) if seconds < 1 else int(0.12 * SR)
+        start = max(0, peak * hop - lead)
+    else:
+        above = torch.nonzero(env > env.max() * 0.25)
+        start = max(0, (int(above[0]) if len(above) else 0) * hop - int(0.03 * SR))
+    start = min(start, max(0, a.shape[1] - n))
     a = a[:, start : start + n]
     fi, fo = int(0.004 * SR), min(int(0.25 * SR), a.shape[1] // 3)
     a[:, :fi] *= torch.linspace(0, 1, fi)
@@ -101,6 +111,7 @@ def main():
             x = sample_euler(model=ldm, noise=noise, cond=cond, num_steps=args.steps,
                              renoise=[0, 0.5, 0.5, 0.3][: args.steps] + [0.3] * max(0, args.steps - 4), cfg=args.cfg)
             audio = ldm.autoencoder.inverse(x).float().cpu()
+        audio = audio.clone()  # leave inference mode: allow in-place edits
         if device == "cuda":
             torch.cuda.synchronize()
         dt = time.perf_counter() - t1
