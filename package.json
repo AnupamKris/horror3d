@@ -1,0 +1,25 @@
+{
+  "name": "horror3d",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run models && tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "models": "node tools/optimize-models.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.181.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "@types/three": "^0.181.0",
+    "meshoptimizer": "^0.25.0",
+    "typescript": "5.9",
+    "vite": "^7.3.8"
+  }
+}
