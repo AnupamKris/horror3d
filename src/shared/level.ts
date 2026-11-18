@@ -199,3 +199,21 @@ export const PLAYER = {
 
 // yaw convention: forward = (-sin(yaw), 0, -cos(yaw)); yaw 90° looks toward -X (the bed).
 export const SPAWN: { pos: Vec3; yaw: number } = { pos: [0.35, 0, 0.55], yaw: deg(80) };
+
+// ------------------------------------------------------------------ fixed sound emitter spots
+// Shared by the sim (where cues fire) and the client sound editor (where they're drawn).
+const doorAnchor = ENTITIES[0].anchor;
+export const SOUND_SPOTS = {
+  /** the ceiling bulb that pops at the blackout */
+  bulb: [0, 2.1, 0] as Vec3,
+  /** wind leaking through the boarded window (continuous loop) */
+  wind: [3.2, 1.5, -0.2] as Vec3,
+  /** knocks come from the hallway side of the door, not its face */
+  knock: [doorAnchor[0], 1.25, doorAnchor[2] - 0.45] as Vec3,
+  /** footsteps upstairs: random point in this square, above the ceiling */
+  stepsAbove: { y: 3.2, half: 2 },
+  /** random ambient creaks / thuds: anywhere in this box */
+  ambientBox: { min: [ROOM.minX, 0.5, ROOM.minZ] as Vec3, max: [ROOM.minX + 6, 2.5, ROOM.minZ + 5] as Vec3 },
+  /** whisper: this far behind the listener's head */
+  whisperBehind: 0.6,
+};

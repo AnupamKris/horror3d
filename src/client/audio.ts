@@ -1,6 +1,58 @@
-// Fully procedural horror audio (zero asset bytes). WebAudio + HRTF panning + generated reverb.
-import type { Vec3 } from "../shared/level";
+// Horror audio: recorded takes (public/sfx) with procedural fallback. WebAudio + HRTF panning + generated reverb.
+import { ROOM_BOUNDS, SOUND_SPOTS, type Vec3 } from "../shared/level";
 import type { SoundId } from "../shared/protocol";
+
+/** live-tunable spatial mix (the sound editor edits this; new voices pick up changes) */
+export interface AudioTune {
+  distanceModel: DistanceModelType;
+  refDistance: number;
+  rolloff: number;
+  maxDistance: number;
+  /** master reverb send */
+  wet: number;
+  /** reverb tail length (s) */
+  verbSec: number;
+  /** muffle sources outside the room shell (hallway, upstairs) */
+  occlusion: boolean;
+  occlusionHz: number;
+  /** recorded ambience beds + drone */
+  beds: number;
+  hrtf: boolean;
+}
+
+export const DEFAULT_TUNE: AudioTune = {
+  distanceModel: "inverse",
+  refDistance: 0.6,
+  rolloff: 1.6,
+  maxDistance: 20,
+  wet: 0.32,
+  verbSec: 0.9,
+  occlusion: true,
+  occlusionHz: 650,
+  beds: 1,
+  hrtf: true,
+};
+
+/** what the sound editor sees for every voice that starts */
+export interface VoiceInfo {
+  id: string;
+  pos?: Vec3;
+  vol: number;
+  /** audio-clock start + expected length (s) */
+  t0: number;
+  dur: number;
+  kind: "sample" | "synth";
+  take?: string;
+  occluded: boolean;
+  /** post-panner level meter (only while the editor is inspecting) */
+  meter?: AnalyserNode;
+}
+
+/** rough lengths of the procedural fallbacks, for the editor's markers */
+const SYNTH_DUR: Record<string, number> = {
+  creak: 1.7, whisper: 2, knock: 1.1, door_rattle: 0.6, steps_above: 4.5, giggle: 0.7, music_box: 8,
+  drawer: 0.6, lid: 1, unlock: 0.4, pickup: 0.3, bulb_pop: 0.6, stinger: 2.3, thud: 0.3, breath: 3, footstep: 0.2,
+};
 
 export class Audio {
   ctx: AudioContext;
@@ -11,7 +63,16 @@ export class Audio {
   private noiseBuf: AudioBuffer;
   private heart = { next: 0, rate: 1 };
   private droneGain!: GainNode;
+  private bedBus: GainNode;
   private stepSide = 0;
+  tune: AudioTune = { ...DEFAULT_TUNE };
+  private builtVerbSec = 0;
+  readonly listenerPos: Vec3 = [0, 1.6, 0];
+  readonly listenerFwd: Vec3 = [0, 0, -1];
+  /** editor hook: attach level meters + report every voice */
+  inspect = false;
+  onVoice?: (v: VoiceInfo) => void;
+  private pending: VoiceInfo | null = null;
 
   constructor() {
     this.ctx = new AudioContext({ latencyHint: "interactive" });
@@ -25,10 +86,11 @@ export class Audio {
     this.sfx = c.createGain();
     this.sfx.connect(this.master);
     this.verb = c.createConvolver();
-    this.verb.buffer = this.impulse(1.8, 2.6);
     this.verbSend = c.createGain();
-    this.verbSend.gain.value = 0.5;
     this.verbSend.connect(this.verb).connect(this.master);
+    this.bedBus = c.createGain();
+    this.bedBus.connect(this.master);
+    this.applyTune();
     this.noiseBuf = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -71,6 +133,27 @@ export class Audio {
 
   has(id: string) { return this.samples.has(id); }
 
+  /** push tune changes that affect running nodes (verb, beds); panner params apply to new voices */
+  applyTune() {
+    const T = this.tune, t = this.ctx.currentTime;
+    this.verbSend.gain.setTargetAtTime(T.wet, t, 0.05);
+    this.bedBus.gain.setTargetAtTime(T.beds, t, 0.1);
+    if (Math.abs(this.builtVerbSec - T.verbSec) > 0.01) {
+      this.verb.buffer = this.impulse(T.verbSec, 3);
+      this.builtVerbSec = T.verbSec;
+    }
+  }
+
+  /** wrap one logical sound so every node it creates is reported as one voice */
+  private voice(id: string, pos: Vec3 | undefined, vol: number, fn: () => void) {
+    this.pending = { id, pos, vol, t0: this.ctx.currentTime, dur: SYNTH_DUR[id] ?? 1.5, kind: "synth", occluded: false };
+    try { fn(); } finally {
+      const v = this.pending;
+      this.pending = null;
+      if (v && this.onVoice) this.onVoice(v);
+    }
+  }
+
   /** play a random take (never the same twice in a row) with slight pitch variance */
   sample(id: string, pos?: Vec3, vol = 1, opts: { rate?: number; jitter?: number; wet?: number; delay?: number } = {}) {
     const takes = this.samples.get(id);
@@ -82,6 +165,11 @@ export class Audio {
     src.buffer = takes[i];
     const jitter = opts.jitter ?? 0.05;
     src.playbackRate.value = (opts.rate ?? 1) * (1 + (Math.random() * 2 - 1) * jitter);
+    if (this.pending) {
+      this.pending.kind = "sample";
+      this.pending.take = `${id} ${i + 1}/${takes.length}`;
+      this.pending.dur = (opts.delay ?? 0) + takes[i].duration / src.playbackRate.value;
+    }
     src.connect(this.out(pos, vol, opts.wet ?? 0.5));
     src.start(this.ctx.currentTime + (opts.delay ?? 0));
     return true;
@@ -89,17 +177,40 @@ export class Audio {
 
   resume() { return this.ctx.resume(); }
 
+  /** small-room impulse: a few discrete early reflections (wall distances of a ~6x5m room),
+   *  then a decorrelated tail that darkens as it decays. A short tail keeps the direct sound localizable. */
   private impulse(sec: number, decay: number) {
-    const c = this.ctx, n = c.sampleRate * sec, b = c.createBuffer(2, n, c.sampleRate);
+    const c = this.ctx, sr = c.sampleRate, n = Math.max(1, (sr * sec) | 0), b = c.createBuffer(2, n, sr);
+    const pre = (0.008 * sr) | 0;
+    const early = [0.011, 0.017, 0.023, 0.029, 0.037, 0.044, 0.052];
     for (let ch = 0; ch < 2; ch++) {
       const d = b.getChannelData(ch);
-      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, decay);
+      let lp = 0;
+      for (let i = pre; i < n; i++) {
+        const x = (i - pre) / (n - pre);
+        const k = 0.65 - 0.5 * x; // one-pole lowpass closing over time: furniture eats the highs
+        lp += k * (Math.random() * 2 - 1 - lp);
+        d[i] = lp * Math.pow(1 - x, decay) * 0.6;
+      }
+      early.forEach((e, j) => {
+        const at = ((e + (ch ? 0.0013 * (j % 3) : 0)) * sr) | 0;
+        if (at < n) d[at] += (j % 2 ? -1 : 1) * 0.9 * Math.pow(0.78, j);
+      });
     }
     return b;
   }
 
+  /** 0 = inside the room shell, 1 = behind a wall / the ceiling */
+  occlusionOf(pos: Vec3) {
+    const R = ROOM_BOUNDS, m = 0.05;
+    const outside = pos[0] < R.minX - m || pos[0] > R.maxX + m || pos[2] < R.minZ - m || pos[2] > R.maxZ + m || pos[1] > R.height + m;
+    return outside ? 1 : 0;
+  }
+
   setListener(pos: { x: number; y: number; z: number }, fwd: { x: number; y: number; z: number }) {
     const l = this.ctx.listener, t = this.ctx.currentTime;
+    this.listenerPos[0] = pos.x; this.listenerPos[1] = pos.y; this.listenerPos[2] = pos.z;
+    this.listenerFwd[0] = fwd.x; this.listenerFwd[1] = fwd.y; this.listenerFwd[2] = fwd.z;
     if (l.positionX) {
       l.positionX.setTargetAtTime(pos.x, t, 0.02);
       l.positionY.setTargetAtTime(pos.y, t, 0.02);
@@ -114,27 +225,53 @@ export class Audio {
     }
   }
 
-  /** output node for a sound: positional (HRTF) or head-locked */
+  /** output node for a sound: positional (HRTF) or head-locked.
+   *  - input forced to mono: a stereo take through an HRTF panner keeps its baked-in width and
+   *    smears the direction cue
+   *  - reverb send is taken BEFORE the panner and only mildly distance-scaled, so far sources get a
+   *    lower direct/reverb ratio (the main "how far away" cue) and the tail stays diffuse, not panned
+   *  - sources outside the room shell are lowpassed (wall / ceiling occlusion) */
   private out(pos?: Vec3, vol = 1, wet = 0.5): GainNode {
-    const c = this.ctx, g = c.createGain();
+    const c = this.ctx, T = this.tune, g = c.createGain();
+    g.channelCount = 1;
+    g.channelCountMode = "explicit";
     g.gain.value = vol;
+    let src: AudioNode = g;
+    const occ = pos && T.occlusion ? this.occlusionOf(pos) : 0;
+    if (occ) {
+      const lp = c.createBiquadFilter();
+      lp.type = "lowpass"; lp.frequency.value = T.occlusionHz; lp.Q.value = 0.5;
+      const og = c.createGain();
+      og.gain.value = 0.8;
+      src = g.connect(lp).connect(og);
+    }
+    let heard: AudioNode = src;
+    const s = c.createGain();
     if (pos) {
       const p = c.createPanner();
-      p.panningModel = "HRTF";
-      p.distanceModel = "inverse";
-      p.refDistance = 0.8;
-      p.rolloffFactor = 1.2;
+      p.panningModel = T.hrtf ? "HRTF" : "equalpower";
+      p.distanceModel = T.distanceModel;
+      p.refDistance = T.refDistance;
+      p.rolloffFactor = T.rolloff;
+      p.maxDistance = T.maxDistance;
       p.positionX.value = pos[0]; p.positionY.value = pos[1]; p.positionZ.value = pos[2];
-      g.connect(p);
-      p.connect(this.sfx);
-      const s = c.createGain();
-      s.gain.value = wet;
-      p.connect(s).connect(this.verbSend);
+      src.connect(p).connect(this.sfx);
+      heard = p;
+      const L = this.listenerPos;
+      const d = Math.hypot(pos[0] - L[0], pos[1] - L[1], pos[2] - L[2]);
+      s.gain.value = (wet / (1 + 0.35 * Math.max(0, d - T.refDistance))) * (occ ? 1.3 : 1);
     } else {
-      g.connect(this.sfx);
-      const s = c.createGain();
+      src.connect(this.sfx);
       s.gain.value = wet * 0.6;
-      g.connect(s).connect(this.verbSend);
+    }
+    src.connect(s).connect(this.verbSend);
+    const v = this.pending;
+    if (v) {
+      v.occluded ||= !!occ;
+      if (this.inspect) {
+        if (!v.meter) { v.meter = c.createAnalyser(); v.meter.fftSize = 512; }
+        heard.connect(v.meter);
+      }
     }
     return g;
   }
@@ -180,7 +317,7 @@ export class Audio {
       const g = c.createGain();
       g.gain.value = 0;
       g.gain.linearRampToValueAtTime(vol, c.currentTime + 5);
-      src.connect(g).connect(this.master);
+      src.connect(g).connect(this.bedBus);
       src.start();
     }
   }
@@ -191,7 +328,7 @@ export class Audio {
     this.droneGain = c.createGain();
     this.droneGain.gain.value = 0;
     this.droneGain.gain.linearRampToValueAtTime(0.5, t + 6);
-    this.droneGain.connect(this.master);
+    this.droneGain.connect(this.bedBus);
     // low drone: detuned oscillators through a slowly sweeping lowpass
     const lp = c.createBiquadFilter();
     lp.type = "lowpass"; lp.frequency.value = 220; lp.Q.value = 4;
@@ -223,7 +360,7 @@ export class Audio {
     flfo.connect(flg).connect(bp.frequency);
     const wp = c.createPanner();
     wp.panningModel = "HRTF";
-    wp.positionX.value = 3.2; wp.positionY.value = 1.5; wp.positionZ.value = -0.2;
+    [wp.positionX.value, wp.positionY.value, wp.positionZ.value] = SOUND_SPOTS.wind;
     wind.connect(bp).connect(wg).connect(wp).connect(this.droneGain);
     wind.start(); glfo.start(); flfo.start();
   }
@@ -247,6 +384,10 @@ export class Audio {
   }
 
   footstep(run: boolean, crouch: boolean) {
+    this.voice("footstep", undefined, 1, () => this.footstepInner(run, crouch));
+  }
+
+  private footstepInner(run: boolean, crouch: boolean) {
     const c = this.ctx, t = c.currentTime;
     const vol = crouch ? 0.12 : run ? 0.45 : 0.28;
     this.stepSide ^= 1;
@@ -273,6 +414,10 @@ export class Audio {
 
   // ---------------------------------------------------------------- one-shots
   play(id: SoundId, pos?: Vec3, vol = 1) {
+    this.voice(id, pos, vol, () => this.playInner(id, pos, vol));
+  }
+
+  private playInner(id: SoundId, pos?: Vec3, vol: number = 1) {
     // recorded takes first (same id as the event), with a few remaps / layered tweaks
     switch (id) {
       case "hinge": if (this.sample("creak", pos, vol * 0.7, { rate: 1.15 })) return; break;

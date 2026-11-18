@@ -1,7 +1,7 @@
 // Authoritative game simulation. Runs ONLY on the host (in-tab for solo / listen-server,
 // or in Node for a dedicated server). Pure logic: no DOM, no three.js.
 import {
-  collide, DOLL_ANCHORS, ENTITIES, entityById, ITEMS, PLAYER, ROOM_BOUNDS, SPAWN,
+  collide, DOLL_ANCHORS, ENTITIES, entityById, ITEMS, PLAYER, ROOM_BOUNDS, SOUND_SPOTS, SPAWN,
   type ItemId, type Vec3,
 } from "./level";
 import type {
@@ -241,7 +241,7 @@ export class GameSim {
     this.after(2.8, () => {
       this.power = 0;
       this.emit({ k: "blackout" });
-      this.sound("bulb_pop", [0, 2.1, 0]);
+      this.sound("bulb_pop", SOUND_SPOTS.bulb);
       this.emit({ k: "lamp_swing", amp: 0.5 });
     });
     this.after(8, () => {
@@ -303,14 +303,17 @@ export class GameSim {
     const any = this.players.values().next().value as PlayerRec | undefined;
     if (!any) return;
     const roll = r();
-    const rp = (): Vec3 => [ROOM_BOUNDS.minX + r() * 6, 0.5 + r() * 2, ROOM_BOUNDS.minZ + r() * 5];
+    const { min, max } = SOUND_SPOTS.ambientBox;
+    const rp = (): Vec3 => [min[0] + r() * (max[0] - min[0]), min[1] + r() * (max[1] - min[1]), min[2] + r() * (max[2] - min[2])];
+    const sa = SOUND_SPOTS.stepsAbove;
     if (roll < 0.22) this.sound("creak", rp(), 0.6 + r() * 0.4);
-    else if (roll < 0.36) this.sound("steps_above", [r() * 4 - 2, 3.2, r() * 4 - 2], 0.7);
+    else if (roll < 0.36) this.sound("steps_above", [(r() * 2 - 1) * sa.half, sa.y, (r() * 2 - 1) * sa.half], 0.7);
     else if (roll < 0.48) {
       const p = this.nearestPlayer(this.doll.pos) ?? any;
       // whisper right behind a player's head
-      this.sound("whisper", [p.pos[0] + Math.sin(p.yaw) * 0.6, 1.6, p.pos[2] + Math.cos(p.yaw) * 0.6], 0.8);
-    } else if (roll < 0.58) this.sound("knock", entityById("door")!.anchor, 0.9);
+      const b = SOUND_SPOTS.whisperBehind;
+      this.sound("whisper", [p.pos[0] + Math.sin(p.yaw) * b, 1.6, p.pos[2] + Math.cos(p.yaw) * b], 0.8);
+    } else if (roll < 0.58) this.sound("knock", SOUND_SPOTS.knock, 0.9);
     else if (roll < 0.7 && this.power > 0) this.emit({ k: "flicker", dur: 0.4 + r() * 1.2, intensity: 0.5 + r() * 0.5 });
     else if (roll < 0.82 && this.doll.anchor === 0) {
       this.emit({ k: "chair", amp: 0.12 + r() * 0.1, dur: 6 + r() * 6 });

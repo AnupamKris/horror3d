@@ -81,17 +81,20 @@ def make_loop(a: torch.Tensor) -> torch.Tensor:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="")
+    ap.add_argument("--spec", default=os.path.join(HERE, "prompts.json"), help="prompt list json")
+    ap.add_argument("--out", default=OUT, help="output folder for WAVs")
     ap.add_argument("--takes", type=int, default=0, help="candidates per sound (default variants*2)")
     ap.add_argument("--steps", type=int, default=4)
     ap.add_argument("--cfg", type=float, default=4.5)
     args = ap.parse_args()
 
-    spec = json.load(open(os.path.join(HERE, "prompts.json"), encoding="utf-8"))
+    spec = json.load(open(args.spec, encoding="utf-8"))
+    out_dir = args.out
     jobs = [(s, False) for s in spec["sounds"]] + [(s, True) for s in spec["loops"]]
     if args.only:
         keep = set(args.only.split(","))
         jobs = [j for j in jobs if j[0]["id"] in keep]
-    os.makedirs(OUT, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     t0 = time.perf_counter()
@@ -120,7 +123,7 @@ def main():
         for k, i in enumerate(ranked[: s["variants"]]):
             a = audio[i]
             a = make_loop(a) if is_loop else trim(a, s["seconds"])
-            path = os.path.join(OUT, f"{s['id']}_{k}.wav")
+            path = os.path.join(out_dir, f"{s['id']}_{k}.wav")
             torchaudio.save(path, a, SR)
         print(f"{s['id']:12s} {takes} takes, {audio.shape[-1] / SR:.1f}s each, {dt:.2f}s  -> kept {s['variants']}", flush=True)
 

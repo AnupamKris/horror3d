@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { Audio } from "./client/audio";
 import { Player } from "./client/player";
 import { Post } from "./client/post";
+import { SoundEditor } from "./client/sound-editor";
 import { World } from "./client/world";
 import { ClientSession } from "./net/client";
 import { Host } from "./net/host";
@@ -23,6 +24,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const post = new Post(renderer);
 
 const world = new World();
+let editor: SoundEditor | null = null;
 const player = new Player(canvas);
 world.scene.add(player.camera);
 
@@ -34,6 +36,7 @@ function resize() {
   player.camera.aspect = w / h;
   player.camera.updateProjectionMatrix();
   post.setSize(w, h);
+  editor?.resize(w, h);
 }
 addEventListener("resize", resize);
 resize();
@@ -74,6 +77,17 @@ loadingEl.textContent = "";
 // precompile all shaders before the first frame to avoid hitches
 renderer.compile(world.scene, player.camera);
 
+// sound editor (F2, or ?sound): cue markers, radar, fly cam, audition + spatial tuning
+editor = new SoundEditor(world.scene, player, canvas, () => rayTargets(), () => session.snap?.doll.pos ?? [0, 0, 0]);
+editor.resize(innerWidth, innerHeight);
+editor.onToggle = (on) => {
+  if (on && started) $("menu").classList.add("hidden");
+  else if (!on && started && !escaped && !document.pointerLockElement) $("menu").classList.remove("hidden");
+};
+canvas.addEventListener("click", () => {
+  if (editor?.on && started && !document.pointerLockElement) player.lock();
+});
+
 let audio: Audio | null = null;
 let started = false;
 let escaped = false;
@@ -84,6 +98,7 @@ playBtn.onclick = async () => {
     audio = new Audio();
     await audio.resume();
     audio.startAmbience();
+    editor?.attach(audio);
   }
   $("menu").classList.add("hidden");
   player.lock();
@@ -95,7 +110,7 @@ playBtn.onclick = async () => {
   }
 };
 document.addEventListener("pointerlockchange", () => {
-  if (!document.pointerLockElement && started && !escaped) $("menu").classList.remove("hidden"), (playBtn.textContent = "Resume");
+  if (!document.pointerLockElement && started && !escaped && !editor?.on) $("menu").classList.remove("hidden"), (playBtn.textContent = "Resume");
 });
 
 let fadeTarget = 1, fadeVal = 1, fadeSpeed = 1;
@@ -176,7 +191,7 @@ function findInteractable(o: THREE.Object3D | null): string | null {
 
 const rayTargets = () => [...world.interactables.map((i) => i.obj), ...world.occluders];
 player.onInteract = () => {
-  if (focus && !escaped) session.interact(focus);
+  if (focus && !escaped && !editor?.flying) session.interact(focus);
 };
 player.onStep = () => audio?.footstep(player.running, player.crouch);
 player.onToggleFlash = () => audio?.play("pickup", undefined, 0.25);
@@ -238,6 +253,8 @@ renderer.setAnimationLoop(() => {
   }
 
   world.update(dt, player.camera.position, dollSeen);
+  editor?.update(dt);
+  const viewCam = editor?.camera(player.camera) ?? player.camera;
 
   stateAcc += dt;
   if (stateAcc >= 1 / STATE_HZ) {
@@ -261,8 +278,9 @@ renderer.setAnimationLoop(() => {
   // audio listener + fear
   const fear = session.me()?.fear ?? 0;
   if (audio) {
-    player.camera.getWorldDirection(fwd);
-    audio.setListener(player.camera.position, fwd);
+    const lc = editor?.listener(player.camera) ?? player.camera;
+    lc.getWorldDirection(fwd);
+    audio.setListener(lc.position, fwd);
     audio.update(fear + scare * 0.5);
   }
 
@@ -276,7 +294,7 @@ renderer.setAnimationLoop(() => {
   u.uFade.value = started ? fadeVal : 1;
   fadeEl.style.opacity = "0";
 
-  post.render(world.scene, player.camera);
+  post.render(world.scene, viewCam);
   post.adapt(dt);
 });
 
@@ -300,6 +318,7 @@ function renderDebug() {
     : "<b>DEBUG</b> unavailable on a remote server";
 }
 renderDebug();
+if (params.has("sound")) editor.toggle(true);
 addEventListener("keydown", (e) => {
   if (e.code === "Backquote") {
     debugOn = !debugOn;
@@ -317,7 +336,8 @@ addEventListener("keydown", (e) => {
 // debug handle
 Object.assign(window, {
   game: {
-    world, player, session, host, renderer, post,
+    world, player, session, host, renderer, post, editor,
+    get audio() { return audio; },
     /** debug teleport (only works with an in-tab host, which owns authority) */
     tp(x: number, z: number, yaw = player.yaw, pitch = player.pitch) {
       const p = host?.sim.players.get(session.you);

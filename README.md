@@ -9,7 +9,7 @@ npm install
 npm run models   # meshopt-compress public/models/*.glb -> public/m/*.glb
 npm run dev
 ```
-URL params: `?lag=120` (fake network latency on the loopback), `?name=Bob`, `?server=ws://host:port` (dedicated server, future).
+URL params: `?sound` (open the sound editor), `?debug` (debug keys), `?lag=120` (fake network latency on the loopback), `?name=Bob`, `?server=ws://host:port` (dedicated server, future).
 
 ## Architecture (multiplayer-ready)
 ```
@@ -42,3 +42,15 @@ src/client/   rendering only (three.js): world, player, materials, audio, post
 Single post pass (ACES, CA, grain, vignette), MSAA HDR target, dynamic resolution (0.55–1.0),
 only the flashlight has a per-frame shadow map; moonlight shadow updates only when something moves;
 static props have frozen matrices; meshopt-compressed geometry (~0.5 MB for the whole room).
+
+## Sound editor (F2)
+Shows every sound cue in 3D: live markers sized by the measured post-panner level, a dashed line from
+the listener, and a label with distance, head-relative direction (e.g. `120° L (behind) ↑30°`) and dBFS.
+Static cue spots come straight from `level.ts` (entity anchors, doll anchors, `SOUND_SPOTS`), plus the
+room shell (occlusion boundary), the random-ambient volume and the upstairs-steps plane.
+* **V** fly camera, **L** listener follows the fly cam (walk around a cue and hear it move), WASD/QE, Shift fast
+* **P** play the selected sound at the aim point, **[ ]** pick sound, **R** replay last cue, **O** orbit test
+  (8 points around your head, clockwise from front), **M** mute ambience beds, **H** hide cue spots
+* **Esc** frees the mouse for the panel (the menu stays hidden), click the view to resume
+* Spatial mix sliders (distance model, ref distance, rolloff, reverb send/length, occlusion, HRTF) apply to
+  new voices and persist in localStorage; **copy JSON** to paste good values into `DEFAULT_TUNE` in `audio.ts`.
